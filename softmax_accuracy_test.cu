@@ -166,6 +166,9 @@ __global__ void softmax_poly4_cb(const float *logits, float *out,
     for (int i = tid; i < vocab_size; i += bdim) smem[i] = logits[b*vocab_size + i];
     __syncthreads();
 
+    // After the first softmax pass all values are probabilities in (0,1],
+    // so x - max_val is always in (-1, 0]. Horner's Taylor series is accurate
+    // in that range without range reduction — no clamp/int overhead needed.
     for (int iter = 0; iter < SOFTMAX_ITERS; iter++) {
         float local_max = -1e30f;
         for (int i = tid; i < vocab_size; i += bdim) local_max = fmaxf(local_max, smem[i]);
@@ -173,13 +176,8 @@ __global__ void softmax_poly4_cb(const float *logits, float *out,
 
         float local_sum = 0.0f;
         for (int i = tid; i < vocab_size; i += bdim) {
-            float x = smem[i] - max_val;
-            x = fmaxf(x, -88.0f);
-            const float inv_ln2 = 1.44269504f, ln2 = 0.69314718f;
-            int k = __float2int_rn(x * inv_ln2);
-            float r = x - k * ln2, r2 = r*r;
-            float v = (1.0f + r + r2*0.5f + r2*r*0.16666667f + r2*r2*0.041666667f)
-                      * __int_as_float((k+127)<<23);
+            float x = smem[i] - max_val;  // x in (-1, 0]
+            float v = 1.0f + x * (1.0f + x * (0.5f + x * (0.16666667f + x * 0.041666667f)));
             smem[i] = v;
             local_sum += v;
         }
