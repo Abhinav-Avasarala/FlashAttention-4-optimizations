@@ -1,8 +1,7 @@
 metric,value
-avg_kl_divergence,1.59e-08
-max_kl_divergence,1.19e-06
-avg_max_diff,3.72e-08
-hardware_time_ms,0.6440
-poly_time_ms,0.8997
-speedup,0.72
+avg_kl_divergence,-9.31e-09
+max_kl_divergence,8.43e-08
 top1_match_rate,100.00
+hardware_time_ms,0.1560
+poly_time_ms,0.1357
+speedup,1.1499
