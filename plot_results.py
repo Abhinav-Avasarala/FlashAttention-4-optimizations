@@ -227,23 +227,80 @@ def print_summary(data):
     print(f"  Best accuracy/speed tradeoff in this benchmark")
     print("="*70 + "\n")
 
+def create_compute_bound_plot(filename='compute_bound_results.csv'):
+    """Plot compute-bound benchmark: hardware vs polynomial, register-resident."""
+    data = {'method': [], 'time_ms': [], 'speedup': []}
+    with open(filename, 'r') as f:
+        reader = csv.DictReader(f)
+        for row in reader:
+            data['method'].append(row['method'])
+            data['time_ms'].append(float(row['time_ms']))
+            data['speedup'].append(float(row['speedup']))
+
+    fig, (ax1, ax2) = plt.subplots(1, 2, figsize=(12, 5))
+    fig.suptitle('Compute-Bound Benchmark (512 exp() calls per thread, register-resident)',
+                 fontsize=13, fontweight='bold')
+
+    colors = ['#1f77b4', '#ff7f0e']
+
+    # Left: execution time
+    bars = ax1.bar(data['method'], data['time_ms'], color=colors, alpha=0.8,
+                   edgecolor='black', linewidth=1.5)
+    for bar, t in zip(bars, data['time_ms']):
+        ax1.text(bar.get_x() + bar.get_width() / 2, bar.get_height(),
+                 f'{t:.4f} ms', ha='center', va='bottom', fontweight='bold', fontsize=11)
+    ax1.set_ylabel('Time (ms)', fontsize=12, fontweight='bold')
+    ax1.set_title('Execution Time', fontsize=12, fontweight='bold')
+    ax1.grid(True, alpha=0.3, axis='y')
+
+    # Right: speedup bar with 1x baseline line
+    speedup_val = data['speedup'][1]
+    color = '#2ca02c' if speedup_val > 1.0 else '#d62728'
+    bar = ax2.bar(['Polynomial Degree 4'], [speedup_val], color=color,
+                  alpha=0.8, edgecolor='black', linewidth=1.5)
+    ax2.axhline(y=1.0, color='red', linestyle='--', linewidth=2, label='Hardware baseline (1x)')
+    ax2.text(bar[0].get_x() + bar[0].get_width() / 2, speedup_val,
+             f'{speedup_val:.2f}x', ha='center', va='bottom', fontweight='bold', fontsize=14)
+    ax2.set_ylabel('Speedup vs Hardware __expf', fontsize=12, fontweight='bold')
+    ax2.set_title('Speedup (compute-bound regime)', fontsize=12, fontweight='bold')
+    ax2.set_ylim(0, max(1.5, speedup_val + 0.2))
+    ax2.legend(fontsize=10)
+    ax2.grid(True, alpha=0.3, axis='y')
+
+    verdict = "Polynomial FASTER — matches Flash Attention 4 claim" if speedup_val > 1.05 \
+         else "Hardware wins — polynomial overhead exceeds gain" if speedup_val < 0.95 \
+         else "Roughly equal — hardware throughput ceiling reached"
+    fig.text(0.5, 0.01, verdict, ha='center', fontsize=11,
+             color='green' if speedup_val > 1.05 else 'red', fontweight='bold')
+
+    plt.tight_layout(rect=[0, 0.05, 1, 1])
+    plt.savefig('compute_bound_comparison.png', dpi=300, bbox_inches='tight')
+    print("✓ Saved compute_bound_comparison.png")
+    plt.close()
+
+
 if __name__ == "__main__":
     try:
         print("Reading benchmark results...")
         data = read_benchmark_csv('benchmark_results.csv')
-        
+
         print("Creating visualizations...")
         create_accuracy_plot(data)
         create_detailed_analysis(data)
-        
+
         print("\nGenerating summary...")
         print_summary(data)
-        
+
+        if __import__('os').path.exists('compute_bound_results.csv'):
+            print("\nCreating compute-bound plot...")
+            create_compute_bound_plot()
+            print("  - compute_bound_comparison.png")
+
         print("\nAll plots generated successfully!")
         print("Files created:")
         print("  - accuracy_comparison.png")
         print("  - detailed_analysis.png")
-        
+
     except FileNotFoundError as e:
         print(f"Error: {e}")
         print("Make sure benchmark_results.csv exists (run exponential_kernel first)")

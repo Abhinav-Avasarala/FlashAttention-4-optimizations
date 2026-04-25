@@ -1,271 +1,221 @@
 #include <cuda_runtime.h>
 #include <cstdio>
 #include <cmath>
-#include <chrono>
 #include <algorithm>
 
+#define ITERS 512
+#define SCALE 9.54e-7f  // feedback scale: keeps x in [-1,1] to prevent overflow
+
 // ============================================================================
-// HARDWARE EXPONENTIAL KERNEL (baseline)
+// ACCURACY KERNELS — single pass, used to measure RMSE vs CPU reference
 // ============================================================================
-__global__ void exp_hardware(const float *input, float *output, int n) {
-    int idx = blockIdx.x * blockDim.x + threadIdx.x;
-    if (idx < n) {
-        output[idx] = __expf(input[idx]);
-    }
+
+__global__ void exp_hw_acc(const float *in, float *out, int n) {
+    int i = blockIdx.x * blockDim.x + threadIdx.x;
+    if (i < n) out[i] = __expf(in[i]);
+}
+
+__global__ void exp_poly3_acc(const float *in, float *out, int n) {
+    int i = blockIdx.x * blockDim.x + threadIdx.x;
+    if (i >= n) return;
+    float x = in[i];
+    const float inv_ln2 = 1.44269504f, ln2 = 0.69314718f;
+    x = fmaxf(fminf(x, 88.0f), -88.0f);
+    int k = __float2int_rn(x * inv_ln2);
+    float r = x - k * ln2;
+    float poly = 1.0f + r + r*r*0.5f + r*r*r*0.16666667f;
+    out[i] = poly * __int_as_float((k + 127) << 23);
+}
+
+__global__ void exp_poly4_acc(const float *in, float *out, int n) {
+    int i = blockIdx.x * blockDim.x + threadIdx.x;
+    if (i >= n) return;
+    float x = in[i];
+    const float inv_ln2 = 1.44269504f, ln2 = 0.69314718f;
+    x = fmaxf(fminf(x, 88.0f), -88.0f);
+    int k = __float2int_rn(x * inv_ln2);
+    float r = x - k * ln2, r2 = r*r;
+    float poly = 1.0f + r + r2*0.5f + r2*r*0.16666667f + r2*r2*0.041666667f;
+    out[i] = poly * __int_as_float((k + 127) << 23);
+}
+
+__global__ void exp_poly5_acc(const float *in, float *out, int n) {
+    int i = blockIdx.x * blockDim.x + threadIdx.x;
+    if (i >= n) return;
+    float x = in[i];
+    const float inv_ln2 = 1.44269504f, ln2 = 0.69314718f;
+    x = fmaxf(fminf(x, 88.0f), -88.0f);
+    int k = __float2int_rn(x * inv_ln2);
+    float r = x - k * ln2, r2 = r*r;
+    float poly = 1.0f + r + r2*0.5f + r2*r*0.16666667f
+               + r2*r2*0.041666667f + r2*r2*r*0.0083333333f;
+    out[i] = poly * __int_as_float((k + 127) << 23);
 }
 
 // ============================================================================
-// POLYNOMIAL APPROXIMATION KERNELS
+// COMPUTE-BOUND TIMING KERNELS — ITERS exp calls per thread, register-resident
+// Feedback loop (x = acc * SCALE) keeps x in range and prevents dead-code
+// elimination, mirroring how exp() is used inside a fused attention kernel.
 // ============================================================================
 
-// Degree 3: exp(r) ≈ 1 + r + r²/2 + r³/6  (accurate for small r)
-__global__ void exp_poly3(const float *input, float *output, int n) {
-    int idx = blockIdx.x * blockDim.x + threadIdx.x;
-    if (idx < n) {
-        float x = input[idx];
+__global__ void exp_hw_cb(const float *in, float *out, int n) {
+    int i = blockIdx.x * blockDim.x + threadIdx.x;
+    if (i >= n) return;
+    float x = in[i], acc = 0.0f;
+    #pragma unroll 8
+    for (int j = 0; j < ITERS; j++) { acc += __expf(x); x = acc * SCALE; }
+    out[i] = acc;
+}
+
+__global__ void exp_poly3_cb(const float *in, float *out, int n) {
+    int i = blockIdx.x * blockDim.x + threadIdx.x;
+    if (i >= n) return;
+    float x = in[i], acc = 0.0f;
+    #pragma unroll 8
+    for (int j = 0; j < ITERS; j++) {
         const float inv_ln2 = 1.44269504f, ln2 = 0.69314718f;
-        x = fmaxf(fminf(x, 88.0f), -88.0f);
-        int k = __float2int_rn(x * inv_ln2);
-        float r = x - k * ln2;
-        float poly = 1.0f + r + r*r*0.5f + r*r*r*0.16666667f;
-        output[idx] = poly * __int_as_float((k + 127) << 23);
+        float xc = fmaxf(fminf(x, 88.0f), -88.0f);
+        int k = __float2int_rn(xc * inv_ln2);
+        float r = xc - k * ln2;
+        acc += (1.0f + r + r*r*0.5f + r*r*r*0.16666667f) * __int_as_float((k+127)<<23);
+        x = acc * SCALE;
     }
+    out[i] = acc;
 }
 
-// Degree 4: exp(r) ≈ 1 + r + r²/2 + r³/6 + r⁴/24
-__global__ void exp_poly4(const float *input, float *output, int n) {
-    int idx = blockIdx.x * blockDim.x + threadIdx.x;
-    if (idx < n) {
-        float x = input[idx];
+__global__ void exp_poly4_cb(const float *in, float *out, int n) {
+    int i = blockIdx.x * blockDim.x + threadIdx.x;
+    if (i >= n) return;
+    float x = in[i], acc = 0.0f;
+    #pragma unroll 8
+    for (int j = 0; j < ITERS; j++) {
         const float inv_ln2 = 1.44269504f, ln2 = 0.69314718f;
-        x = fmaxf(fminf(x, 88.0f), -88.0f);
-        int k = __float2int_rn(x * inv_ln2);
-        float r = x - k * ln2;
-        float r2 = r * r;
-        float poly = 1.0f + r + r2*0.5f + r2*r*0.16666667f + r2*r2*0.041666667f;
-        output[idx] = poly * __int_as_float((k + 127) << 23);
+        float xc = fmaxf(fminf(x, 88.0f), -88.0f);
+        int k = __float2int_rn(xc * inv_ln2);
+        float r = xc - k * ln2, r2 = r*r;
+        acc += (1.0f + r + r2*0.5f + r2*r*0.16666667f + r2*r2*0.041666667f)
+               * __int_as_float((k+127)<<23);
+        x = acc * SCALE;
     }
+    out[i] = acc;
 }
 
-// Degree 5: exp(r) ≈ 1 + r + r²/2 + r³/6 + r⁴/24 + r⁵/120
-__global__ void exp_poly5(const float *input, float *output, int n) {
-    int idx = blockIdx.x * blockDim.x + threadIdx.x;
-    if (idx < n) {
-        float x = input[idx];
+__global__ void exp_poly5_cb(const float *in, float *out, int n) {
+    int i = blockIdx.x * blockDim.x + threadIdx.x;
+    if (i >= n) return;
+    float x = in[i], acc = 0.0f;
+    #pragma unroll 8
+    for (int j = 0; j < ITERS; j++) {
         const float inv_ln2 = 1.44269504f, ln2 = 0.69314718f;
-        x = fmaxf(fminf(x, 88.0f), -88.0f);
-        int k = __float2int_rn(x * inv_ln2);
-        float r = x - k * ln2;
-        float r2 = r * r;
-        float poly = 1.0f + r + r2*0.5f + r2*r*0.16666667f
-                   + r2*r2*0.041666667f + r2*r2*r*0.0083333333f;
-        output[idx] = poly * __int_as_float((k + 127) << 23);
+        float xc = fmaxf(fminf(x, 88.0f), -88.0f);
+        int k = __float2int_rn(xc * inv_ln2);
+        float r = xc - k * ln2, r2 = r*r;
+        acc += (1.0f + r + r2*0.5f + r2*r*0.16666667f
+                + r2*r2*0.041666667f + r2*r2*r*0.0083333333f)
+               * __int_as_float((k+127)<<23);
+        x = acc * SCALE;
     }
+    out[i] = acc;
 }
 
 // ============================================================================
-// UTILITY FUNCTIONS
+// HELPERS
 // ============================================================================
 
-// CPU reference computation
-void exp_cpu(const float *input, float *output, int n) {
+void exp_cpu(const float *in, float *out, int n) {
+    for (int i = 0; i < n; i++) out[i] = expf(in[i]);
+}
+
+float compute_rmse(const float *approx, const float *ref, int n) {
+    float sum = 0.0f;
     for (int i = 0; i < n; i++) {
-        output[i] = expf(input[i]);
-    }
-}
-
-// Compute relative error
-float compute_error(const float *approx, const float *reference, int n) {
-    float max_rel_error = 0.0f;
-    float max_abs_error = 0.0f;
-    float sum_sq_rel_error = 0.0f;
-    
-    for (int i = 0; i < n; i++) {
-        float ref = reference[i];
-        float app = approx[i];
-        
-        if (ref != 0.0f) {
-            float rel_error = fabsf((app - ref) / ref);
-            max_rel_error = fmaxf(max_rel_error, rel_error);
-            sum_sq_rel_error += rel_error * rel_error;
+        if (ref[i] != 0.0f) {
+            float e = (approx[i] - ref[i]) / ref[i];
+            sum += e * e;
         }
-        
-        float abs_error = fabsf(app - ref);
-        max_abs_error = fmaxf(max_abs_error, abs_error);
     }
-    
-    // Return RMSE (root mean square error)
-    return sqrtf(sum_sq_rel_error / n);
+    return sqrtf(sum / n);
 }
 
-// ============================================================================
-// BENCHMARK FUNCTION
-// ============================================================================
-
-struct BenchmarkResult {
-    const char *name;
-    float time_ms;
-    float rmse_error;
-    float max_error;
-    float speedup;
-};
-
-BenchmarkResult benchmark_kernel(
-    void (*kernel)(const float *, float *, int),
-    const float *d_input,
-    float *d_output,
-    const float *h_reference,
-    int n,
-    int blocks,
-    int threads_per_block,
-    float baseline_time,
-    const char *name
-) {
-    // Warm-up
-    kernel<<<blocks, threads_per_block>>>(d_input, d_output, n);
+float time_kernel(void (*kernel)(const float*, float*, int),
+                  const float *d_in, float *d_out, int n, int blocks, int threads) {
+    // warmup
+    for (int i = 0; i < 3; i++) kernel<<<blocks, threads>>>(d_in, d_out, n);
     cudaDeviceSynchronize();
-    
-    // Benchmark
+
     cudaEvent_t start, stop;
-    cudaEventCreate(&start);
-    cudaEventCreate(&stop);
-    
-    int iterations = 100;
+    cudaEventCreate(&start); cudaEventCreate(&stop);
     cudaEventRecord(start);
-    for (int i = 0; i < iterations; i++) {
-        kernel<<<blocks, threads_per_block>>>(d_input, d_output, n);
-    }
+    for (int i = 0; i < 20; i++) kernel<<<blocks, threads>>>(d_in, d_out, n);
     cudaEventRecord(stop);
     cudaEventSynchronize(stop);
-    
-    float time_ms;
-    cudaEventElapsedTime(&time_ms, start, stop);
-    time_ms /= iterations;
-    
-    cudaEventDestroy(start);
-    cudaEventDestroy(stop);
-    
-    // Copy result back
-    float *h_output = (float *)malloc(n * sizeof(float));
-    cudaMemcpy(h_output, d_output, n * sizeof(float), cudaMemcpyDeviceToHost);
-    
-    // Compute error
-    float rmse = compute_error(h_output, h_reference, n);
-    
-    // Compute max error for first 10 elements (for debugging)
-    float max_error = 0.0f;
-    for (int i = 0; i < std::min(n, 10); i++) {
-        max_error = fmaxf(max_error, fabsf(h_output[i] - h_reference[i]));
-    }
-    
-    free(h_output);
-    
-    BenchmarkResult result;
-    result.name = name;
-    result.time_ms = time_ms;
-    result.rmse_error = rmse;
-    result.max_error = max_error;
-    result.speedup = baseline_time / time_ms;
-    
-    return result;
+    float ms; cudaEventElapsedTime(&ms, start, stop);
+    cudaEventDestroy(start); cudaEventDestroy(stop);
+    return ms / 20;
 }
 
 // ============================================================================
-// MAIN BENCHMARK
+// MAIN
 // ============================================================================
 
 int main() {
-    int n = 1024 * 1024;  // 1M elements
-    int threads_per_block = 256;
-    int blocks = (n + threads_per_block - 1) / threads_per_block;
-    
-    printf("CUDA Exponential Approximation Benchmark\n");
-    printf("=========================================\n");
-    printf("Array size: %d elements\n", n);
-    printf("Blocks: %d, Threads per block: %d\n\n", blocks, threads_per_block);
-    
-    // Allocate host memory
-    float *h_input = (float *)malloc(n * sizeof(float));
-    float *h_reference = (float *)malloc(n * sizeof(float));
-    
-    // Initialize input with small values (-2 to 0) typical for attention
-    // This is important: large exponentials overflow, attention uses softmax normalization
-    for (int i = 0; i < n; i++) {
-        h_input[i] = -2.0f + (4.0f * rand() / RAND_MAX);  // Range [-2, 2]
+    int n = 1024 * 1024, threads = 256;
+    int blocks = (n + threads - 1) / threads;
+
+    printf("CUDA Exponential Approximation Benchmark (Compute-Bound)\n");
+    printf("==========================================================\n");
+    printf("Elements: %d  |  Exp calls per thread (timing): %d\n\n", n, ITERS);
+
+    float *h_in = (float*)malloc(n * sizeof(float));
+    float *h_ref = (float*)malloc(n * sizeof(float));
+    float *h_out = (float*)malloc(n * sizeof(float));
+    for (int i = 0; i < n; i++) h_in[i] = -2.0f + 4.0f * rand() / RAND_MAX;
+    exp_cpu(h_in, h_ref, n);
+
+    float *d_in, *d_out;
+    cudaMalloc(&d_in, n * sizeof(float));
+    cudaMalloc(&d_out, n * sizeof(float));
+    cudaMemcpy(d_in, h_in, n * sizeof(float), cudaMemcpyHostToDevice);
+
+    // ── Measure RMSE from single-pass accuracy kernels ──
+    void (*acc_kernels[4])(const float*, float*, int) = {
+        exp_hw_acc, exp_poly3_acc, exp_poly4_acc, exp_poly5_acc
+    };
+    float rmse[4];
+    for (int k = 0; k < 4; k++) {
+        acc_kernels[k]<<<blocks, threads>>>(d_in, d_out, n);
+        cudaMemcpy(h_out, d_out, n * sizeof(float), cudaMemcpyDeviceToHost);
+        rmse[k] = compute_rmse(h_out, h_ref, n);
     }
-    
-    // Compute CPU reference
-    exp_cpu(h_input, h_reference, n);
-    
-    // Allocate device memory
-    float *d_input, *d_output;
-    cudaMalloc(&d_input, n * sizeof(float));
-    cudaMalloc(&d_output, n * sizeof(float));
-    
-    // Copy input to device
-    cudaMemcpy(d_input, h_input, n * sizeof(float), cudaMemcpyHostToDevice);
-    
-    // Benchmark hardware exponential (baseline)
-    BenchmarkResult hw_result = benchmark_kernel(
-        exp_hardware, d_input, d_output, h_reference, n, blocks, threads_per_block,
-        1.0f, "Hardware __expf"
-    );
-    
-    printf("Hardware Exponential (__expf):\n");
-    printf("  Time: %.4f ms\n", hw_result.time_ms);
-    printf("  RMSE: %.2e\n", hw_result.rmse_error);
-    printf("  Max Error (first 10): %.2e\n\n", hw_result.max_error);
-    
-    // Benchmark polynomial approximations
-    BenchmarkResult poly3_result = benchmark_kernel(
-        exp_poly3, d_input, d_output, h_reference, n, blocks, threads_per_block,
-        hw_result.time_ms, "Polynomial Degree 3"
-    );
-    
-    printf("Polynomial Approximation (Degree 3):\n");
-    printf("  Time: %.4f ms\n", poly3_result.time_ms);
-    printf("  Speedup vs Hardware: %.2f x\n", poly3_result.speedup);
-    printf("  RMSE: %.2e\n", poly3_result.rmse_error);
-    printf("  Max Error (first 10): %.2e\n\n", poly3_result.max_error);
-    
-    BenchmarkResult poly4_result = benchmark_kernel(
-        exp_poly4, d_input, d_output, h_reference, n, blocks, threads_per_block,
-        hw_result.time_ms, "Polynomial Degree 4"
-    );
-    
-    printf("Polynomial Approximation (Degree 4):\n");
-    printf("  Time: %.4f ms\n", poly4_result.time_ms);
-    printf("  Speedup vs Hardware: %.2f x\n", poly4_result.speedup);
-    printf("  RMSE: %.2e\n", poly4_result.rmse_error);
-    printf("  Max Error (first 10): %.2e\n\n", poly4_result.max_error);
-    
-    BenchmarkResult poly5_result = benchmark_kernel(
-        exp_poly5, d_input, d_output, h_reference, n, blocks, threads_per_block,
-        hw_result.time_ms, "Polynomial Degree 5"
-    );
-    
-    printf("Polynomial Approximation (Degree 5):\n");
-    printf("  Time: %.4f ms\n", poly5_result.time_ms);
-    printf("  Speedup vs Hardware: %.2f x\n", poly5_result.speedup);
-    printf("  RMSE: %.2e\n", poly5_result.rmse_error);
-    printf("  Max Error (first 10): %.2e\n\n", poly5_result.max_error);
-    
-    // Write CSV for plotting
-    FILE *csv_file = fopen("benchmark_results.csv", "w");
-    fprintf(csv_file, "method,time_ms,rmse_error,speedup\n");
-    fprintf(csv_file, "%s,%.4f,%.2e,%.4f\n", hw_result.name, hw_result.time_ms, hw_result.rmse_error, 1.0f);
-    fprintf(csv_file, "%s,%.4f,%.2e,%.4f\n", poly3_result.name, poly3_result.time_ms, poly3_result.rmse_error, poly3_result.speedup);
-    fprintf(csv_file, "%s,%.4f,%.2e,%.4f\n", poly4_result.name, poly4_result.time_ms, poly4_result.rmse_error, poly4_result.speedup);
-    fprintf(csv_file, "%s,%.4f,%.2e,%.4f\n", poly5_result.name, poly5_result.time_ms, poly5_result.rmse_error, poly5_result.speedup);
-    fclose(csv_file);
-    
-    printf("Results written to benchmark_results.csv\n");
-    
-    // Cleanup
-    free(h_input);
-    free(h_reference);
-    cudaFree(d_input);
-    cudaFree(d_output);
-    
+
+    // ── Measure timing from compute-bound kernels ──
+    void (*cb_kernels[4])(const float*, float*, int) = {
+        exp_hw_cb, exp_poly3_cb, exp_poly4_cb, exp_poly5_cb
+    };
+    const char *names[4] = {
+        "Hardware __expf", "Polynomial Degree 3", "Polynomial Degree 4", "Polynomial Degree 5"
+    };
+    float times[4];
+    for (int k = 0; k < 4; k++)
+        times[k] = time_kernel(cb_kernels[k], d_in, d_out, n, blocks, threads);
+
+    // ── Print results ──
+    printf("%-22s  %10s  %12s  %8s\n", "Method", "Time (ms)", "RMSE", "Speedup");
+    printf("%-22s  %10s  %12s  %8s\n", "------", "---------", "----", "-------");
+    for (int k = 0; k < 4; k++) {
+        printf("%-22s  %10.4f  %12.2e  %8.2fx\n",
+               names[k], times[k], rmse[k], times[0] / times[k]);
+    }
+
+    // ── Write CSV ──
+    FILE *f = fopen("benchmark_results.csv", "w");
+    fprintf(f, "method,time_ms,rmse_error,speedup\n");
+    for (int k = 0; k < 4; k++)
+        fprintf(f, "%s,%.4f,%.2e,%.4f\n", names[k], times[k], rmse[k], times[0]/times[k]);
+    fclose(f);
+    printf("\nResults written to benchmark_results.csv\n");
+
+    free(h_in); free(h_ref); free(h_out);
+    cudaFree(d_in); cudaFree(d_out);
     return 0;
 }
