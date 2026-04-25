@@ -8,7 +8,7 @@ NVCC_LIBS = -lcuda -lcudart
 
 # Targets
 BIN_DIR = ./bin
-TARGETS = $(BIN_DIR)/exponential_kernel $(BIN_DIR)/softmax_accuracy_test
+TARGETS = $(BIN_DIR)/exponential_kernel $(BIN_DIR)/softmax_accuracy_test $(BIN_DIR)/compute_bound_benchmark
 
 # Default target
 all: $(TARGETS)
@@ -26,6 +26,11 @@ $(BIN_DIR)/exponential_kernel: exponential_kernel.cu | $(BIN_DIR)
 $(BIN_DIR)/softmax_accuracy_test: softmax_accuracy_test.cu | $(BIN_DIR)
 	$(NVCC) $(NVCC_FLAGS) -o $@ $< $(NVCC_LIBS)
 	@echo "✓ Built softmax_accuracy_test"
+
+# Compute-bound benchmark
+$(BIN_DIR)/compute_bound_benchmark: compute_bound_benchmark.cu | $(BIN_DIR)
+	$(NVCC) $(NVCC_FLAGS) -o $@ $< $(NVCC_LIBS)
+	@echo "✓ Built compute_bound_benchmark"
 
 # Run benchmarks
 run: all
