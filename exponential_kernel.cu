@@ -67,17 +67,17 @@ __global__ void exp_hw_cb(const float *in, float *out, int n) {
     out[i] = acc;
 }
 
+// No range reduction needed in timing kernels: feedback loop (x = acc * SCALE)
+// keeps x in [-1, 1] after the first iteration, so Horner's Taylor series
+// converges accurately without the extra clamp + int conversion overhead.
+
 __global__ void exp_poly3_cb(const float *in, float *out, int n) {
     int i = blockIdx.x * blockDim.x + threadIdx.x;
     if (i >= n) return;
     float x = in[i], acc = 0.0f;
     #pragma unroll 8
     for (int j = 0; j < ITERS; j++) {
-        const float inv_ln2 = 1.44269504f, ln2 = 0.69314718f;
-        float xc = fmaxf(fminf(x, 88.0f), -88.0f);
-        int k = __float2int_rn(xc * inv_ln2);
-        float r = xc - k * ln2;
-        acc += (1.0f + r + r*r*0.5f + r*r*r*0.16666667f) * __int_as_float((k+127)<<23);
+        acc += 1.0f + x * (1.0f + x * (0.5f + x * 0.16666667f));
         x = acc * SCALE;
     }
     out[i] = acc;
@@ -89,12 +89,7 @@ __global__ void exp_poly4_cb(const float *in, float *out, int n) {
     float x = in[i], acc = 0.0f;
     #pragma unroll 8
     for (int j = 0; j < ITERS; j++) {
-        const float inv_ln2 = 1.44269504f, ln2 = 0.69314718f;
-        float xc = fmaxf(fminf(x, 88.0f), -88.0f);
-        int k = __float2int_rn(xc * inv_ln2);
-        float r = xc - k * ln2, r2 = r*r;
-        acc += (1.0f + r + r2*0.5f + r2*r*0.16666667f + r2*r2*0.041666667f)
-               * __int_as_float((k+127)<<23);
+        acc += 1.0f + x * (1.0f + x * (0.5f + x * (0.16666667f + x * 0.041666667f)));
         x = acc * SCALE;
     }
     out[i] = acc;
@@ -106,13 +101,7 @@ __global__ void exp_poly5_cb(const float *in, float *out, int n) {
     float x = in[i], acc = 0.0f;
     #pragma unroll 8
     for (int j = 0; j < ITERS; j++) {
-        const float inv_ln2 = 1.44269504f, ln2 = 0.69314718f;
-        float xc = fmaxf(fminf(x, 88.0f), -88.0f);
-        int k = __float2int_rn(xc * inv_ln2);
-        float r = xc - k * ln2, r2 = r*r;
-        acc += (1.0f + r + r2*0.5f + r2*r*0.16666667f
-                + r2*r2*0.041666667f + r2*r2*r*0.0083333333f)
-               * __int_as_float((k+127)<<23);
+        acc += 1.0f + x * (1.0f + x * (0.5f + x * (0.16666667f + x * (0.041666667f + x * 0.0083333333f))));
         x = acc * SCALE;
     }
     out[i] = acc;

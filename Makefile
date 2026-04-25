@@ -2,7 +2,7 @@
 # Usage: make all
 
 NVCC = nvcc
-CUDA_ARCH = -arch=sm_80  # Change based on your GPU: sm_70 (V100), sm_80 (A100), sm_75 (RTX), sm_86 (RTX 30xx)
+CUDA_ARCH = -arch=sm_90  # Change based on your GPU: sm_70 (V100), sm_80 (A100), sm_90 (H100)
 NVCC_FLAGS = -O3 -std=c++17 -lineinfo $(CUDA_ARCH)
 NVCC_LIBS = -lcuda -lcudart
 
