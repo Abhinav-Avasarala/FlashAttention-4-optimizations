@@ -18,20 +18,6 @@ __global__ void exp_hardware(const float *input, float *output, int n) {
 // POLYNOMIAL APPROXIMATION KERNELS
 // ============================================================================
 
-// Range reduction helper: exp(x) = 2^k * exp(r), r in [-ln2/2, ln2/2]
-// This keeps r small so the Taylor series converges accurately.
-__device__ inline float exp_range_reduce(float x, float poly_r) {
-    // Clamp to avoid overflow/underflow in 2^k
-    x = fmaxf(fminf(x, 88.0f), -88.0f);
-    const float inv_ln2 = 1.44269504f;
-    const float ln2    = 0.69314718f;
-    int k = __float2int_rn(x * inv_ln2);   // round to nearest int
-    float r = x - k * ln2;                 // residual, |r| <= ln2/2 ~ 0.347
-    // poly_r is the caller's polynomial evaluated at r
-    // Multiply by 2^k via IEEE 754 exponent field
-    return poly_r * __int_as_float((k + 127) << 23);
-}
-
 // Degree 3: exp(r) ≈ 1 + r + r²/2 + r³/6  (accurate for small r)
 __global__ void exp_poly3(const float *input, float *output, int n) {
     int idx = blockIdx.x * blockDim.x + threadIdx.x;
