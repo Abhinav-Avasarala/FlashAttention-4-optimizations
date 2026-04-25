@@ -1,0 +1,5 @@
+method,time_ms,rmse_error,speedup
+Hardware __expf,0.0071,5.59e-08,1.0000
+Polynomial Degree 3,0.0072,2.17e-04,0.9857
+Polynomial Degree 4,0.0073,1.37e-05,0.9717
+Polynomial Degree 5,0.0074,7.34e-07,0.9587

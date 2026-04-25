@@ -2,7 +2,7 @@
 # Usage: make all
 
 NVCC = nvcc
-CUDA_ARCH = -arch=sm_70  # Change based on your GPU: sm_70 (V100), sm_80 (A100), sm_75 (RTX), sm_86 (RTX 30xx)
+CUDA_ARCH = -arch=sm_80  # Change based on your GPU: sm_70 (V100), sm_80 (A100), sm_75 (RTX), sm_86 (RTX 30xx)
 NVCC_FLAGS = -O3 -std=c++17 -lineinfo $(CUDA_ARCH)
 NVCC_LIBS = -lcuda -lcudart
 
@@ -64,10 +64,10 @@ help:
 	@echo "Configuration:"
 	@echo "  GPU Compute Capability: $(CUDA_ARCH)"
 	@echo "  Edit CUDA_ARCH if your GPU differs:"
-	@echo "    - V100, A100: -arch=sm_70"
+	@echo "    - V100, A100: -arch=sm_80"
 	@echo "    - A100: -arch=sm_80"
-	@echo "    - RTX 20xx: -arch=sm_75"
-	@echo "    - RTX 30xx: -arch=sm_86"
-	@echo "    - L40: -arch=sm_89"
+	@echo "    - RTX 20xx: -arch=sm_80"
+	@echo "    - RTX 30xx: -arch=sm_80"
+	@echo "    - L40: -arch=sm_80"
 
 .PHONY: all run plot clean help
