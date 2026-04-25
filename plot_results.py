@@ -139,7 +139,7 @@ def create_detailed_analysis(data):
     # Plot 4: Time breakdown
     ax4 = fig.add_subplot(gs[1, 1])
     times = data['time_ms']
-    speedups_for_time = [1.0, 1/s if s != 0 else 1.0 for s in speedups[1:]]
+    speedups_for_time = [1.0] + [1/s if s != 0 else 1.0 for s in speedups[1:]]
     theoretical_times = [t * (1/s) if s != 0 else t for t, s in zip([times[0]], speedups[1:])]
     
     x = np.arange(len(methods_short))

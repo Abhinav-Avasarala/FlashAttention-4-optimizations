@@ -18,43 +18,62 @@ __global__ void exp_hardware(const float *input, float *output, int n) {
 // POLYNOMIAL APPROXIMATION KERNELS
 // ============================================================================
 
-// Degree 3 polynomial approximation: exp(x) ≈ 1 + x + x²/2 + x³/6
+// Range reduction helper: exp(x) = 2^k * exp(r), r in [-ln2/2, ln2/2]
+// This keeps r small so the Taylor series converges accurately.
+__device__ inline float exp_range_reduce(float x, float poly_r) {
+    // Clamp to avoid overflow/underflow in 2^k
+    x = fmaxf(fminf(x, 88.0f), -88.0f);
+    const float inv_ln2 = 1.44269504f;
+    const float ln2    = 0.69314718f;
+    int k = __float2int_rn(x * inv_ln2);   // round to nearest int
+    float r = x - k * ln2;                 // residual, |r| <= ln2/2 ~ 0.347
+    // poly_r is the caller's polynomial evaluated at r
+    // Multiply by 2^k via IEEE 754 exponent field
+    return poly_r * __int_as_float((k + 127) << 23);
+}
+
+// Degree 3: exp(r) ≈ 1 + r + r²/2 + r³/6  (accurate for small r)
 __global__ void exp_poly3(const float *input, float *output, int n) {
     int idx = blockIdx.x * blockDim.x + threadIdx.x;
     if (idx < n) {
         float x = input[idx];
-        float result = 1.0f + x + (x * x) * 0.5f + (x * x * x) * 0.16666667f;
-        output[idx] = result;
+        const float inv_ln2 = 1.44269504f, ln2 = 0.69314718f;
+        x = fmaxf(fminf(x, 88.0f), -88.0f);
+        int k = __float2int_rn(x * inv_ln2);
+        float r = x - k * ln2;
+        float poly = 1.0f + r + r*r*0.5f + r*r*r*0.16666667f;
+        output[idx] = poly * __int_as_float((k + 127) << 23);
     }
 }
 
-// Degree 4 polynomial approximation
-// exp(x) ≈ 1 + x + x²/2 + x³/6 + x⁴/24
+// Degree 4: exp(r) ≈ 1 + r + r²/2 + r³/6 + r⁴/24
 __global__ void exp_poly4(const float *input, float *output, int n) {
     int idx = blockIdx.x * blockDim.x + threadIdx.x;
     if (idx < n) {
         float x = input[idx];
-        float x2 = x * x;
-        float x3 = x2 * x;
-        float x4 = x3 * x;
-        float result = 1.0f + x + x2 * 0.5f + x3 * 0.16666667f + x4 * 0.041666667f;
-        output[idx] = result;
+        const float inv_ln2 = 1.44269504f, ln2 = 0.69314718f;
+        x = fmaxf(fminf(x, 88.0f), -88.0f);
+        int k = __float2int_rn(x * inv_ln2);
+        float r = x - k * ln2;
+        float r2 = r * r;
+        float poly = 1.0f + r + r2*0.5f + r2*r*0.16666667f + r2*r2*0.041666667f;
+        output[idx] = poly * __int_as_float((k + 127) << 23);
     }
 }
 
-// Degree 5 polynomial approximation
-// exp(x) ≈ 1 + x + x²/2 + x³/6 + x⁴/24 + x⁵/120
+// Degree 5: exp(r) ≈ 1 + r + r²/2 + r³/6 + r⁴/24 + r⁵/120
 __global__ void exp_poly5(const float *input, float *output, int n) {
     int idx = blockIdx.x * blockDim.x + threadIdx.x;
     if (idx < n) {
         float x = input[idx];
-        float x2 = x * x;
-        float x3 = x2 * x;
-        float x4 = x3 * x;
-        float x5 = x4 * x;
-        float result = 1.0f + x + x2 * 0.5f + x3 * 0.16666667f + 
-                       x4 * 0.041666667f + x5 * 0.0083333333f;
-        output[idx] = result;
+        const float inv_ln2 = 1.44269504f, ln2 = 0.69314718f;
+        x = fmaxf(fminf(x, 88.0f), -88.0f);
+        int k = __float2int_rn(x * inv_ln2);
+        float r = x - k * ln2;
+        float r2 = r * r;
+        float poly = 1.0f + r + r2*0.5f + r2*r*0.16666667f
+                   + r2*r2*0.041666667f + r2*r2*r*0.0083333333f;
+        output[idx] = poly * __int_as_float((k + 127) << 23);
     }
 }
 

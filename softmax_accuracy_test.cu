@@ -68,14 +68,17 @@ __global__ void softmax_poly4(const float *logits, float *output, int batch_size
     }
     __syncthreads();
     
-    // Compute exp (polynomial) and sum
+    // Compute exp (polynomial with range reduction) and sum
     for (int i = tid; i < vocab_size; i += blockDim.x) {
-        float x = batch_logits[i] - max_val;
-        float x2 = x * x;
-        float x3 = x2 * x;
-        float x4 = x3 * x;
-        // Polynomial approximation
-        batch_output[i] = 1.0f + x + x2 * 0.5f + x3 * 0.16666667f + x4 * 0.041666667f;
+        float x = batch_logits[i] - max_val;  // x <= 0 always
+        // Range reduction: exp(x) = 2^k * exp(r), |r| <= ln2/2
+        const float inv_ln2 = 1.44269504f, ln2 = 0.69314718f;
+        x = fmaxf(x, -88.0f);
+        int k = __float2int_rn(x * inv_ln2);
+        float r = x - k * ln2;
+        float r2 = r * r;
+        float poly = 1.0f + r + r2*0.5f + r2*r*0.16666667f + r2*r2*0.041666667f;
+        batch_output[i] = poly * __int_as_float((k + 127) << 23);
         atomicAdd(&sum_exp, batch_output[i]);
     }
     __syncthreads();
