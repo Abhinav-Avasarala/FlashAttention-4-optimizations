@@ -40,11 +40,11 @@ This means accuracy degrades fast for large |x|, but for |x| ≤ 1 even a degree
 
 ### 2.2 The Three Polynomials
 
-| Degree | Formula | Error bound for |x| ≤ 1 |
-|--------|---------|------------------------|
-| 3 | `1 + x + x²/2 + x³/6` | ≤ x⁴/24 ≈ 0.04 |
-| 4 | `+ x⁴/24` | ≤ x⁵/120 ≈ 0.008 |
-| 5 | `+ x⁵/120` | ≤ x⁶/720 ≈ 0.001 |
+| Degree | Formula | Error bound (x ≤ 1) | RMSE measured |
+|--------|---------|----------------------|---------------|
+| 3 | `1 + x + x²/2 + x³/6` | ≈ 0.04 | 2.17e-04 |
+| 4 | `1 + x + x²/2 + x³/6 + x⁴/24` | ≈ 0.008 | 1.37e-05 |
+| 5 | `1 + x + x²/2 + x³/6 + x⁴/24 + x⁵/120` | ≈ 0.001 | 7.34e-07 |
 
 Each added term costs one more FMA (fused multiply-add) instruction but buys roughly 10x better accuracy.
 
@@ -143,7 +143,7 @@ This is fully parallel within each warp and removes the atomicAdd serialization,
 
 All results on **NVIDIA H100 SXM (sm_90)**. See `results.md` for full tables.
 
-### Exponential kernel (compute-bound, 512 calls/thread):
+### Exponential Kernel — Compute-Bound (512 calls/thread)
 
 | Method | Speedup | RMSE |
 |--------|---------|------|
@@ -151,13 +151,13 @@ All results on **NVIDIA H100 SXM (sm_90)**. See `results.md` for full tables.
 | Polynomial Degree 4 | **1.29x** | 1.4e-5 |
 | Polynomial Degree 5 | **1.12x** | 7.3e-7 |
 
-### Softmax (compute-bound, shared memory):
+### Softmax — Compute-Bound (shared memory, 32 internal passes)
 
 | Method | Speedup | Top-1 Match |
 |--------|---------|-------------|
 | Polynomial Degree 4 | **1.15x** | 100% |
 
-### A100 vs H100 comparison:
+### A100 vs H100 Comparison
 
 The speedup is **architecture-specific**. On A100 (sm_80), the polynomial showed no speedup in either benchmark. On H100 (sm_90), it wins clearly. This is because Hopper's FMA-to-ex2 throughput ratio is different from Ampere — the hardware `ex2` instruction is relatively more expensive on H100, making the FMA-based polynomial competitive.
 
