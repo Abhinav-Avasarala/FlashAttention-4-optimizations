@@ -2,6 +2,8 @@
 
 Benchmarks polynomial approximations of `exp()` on CUDA vs. hardware `__expf`, measuring speedup and accuracy. Inspired by Flash Attention 4's optimization technique.
 
+> **All benchmark results in this repo were collected on an NVIDIA H100 SXM5 (sm_90).** Numbers may differ on other GPU generations.
+
 ## Setup
 
 ### 1. Find your GPU's compute capability
@@ -19,6 +21,7 @@ Edit `CUDA_ARCH` in [Makefile](Makefile) to match:
 | RTX 20xx | `sm_75` |
 | RTX 30xx / A5000 | `sm_86` |
 | L40 / RTX 40xx | `sm_89` |
+| **H100 / H800** | **`sm_90`** |
 
 ### 2. Build and run
 
@@ -80,8 +83,10 @@ After running, you'll have:
 
 ### What to expect
 
-| Method | Speedup | RMSE |
-|--------|---------|------|
+Results below are from an **H100 SXM5** (sm_90). The H100's high memory bandwidth (~3.35 TB/s HBM3) and improved FP32 throughput make the polynomial methods especially competitive — on older architectures the raw speedups may be smaller.
+
+| Method | Speedup (H100) | RMSE |
+|--------|----------------|------|
 | `__expf` (baseline) | 1.00x | 0 |
 | Poly degree 3 | ~1.3x | ~3.5e-3 |
 | Poly degree 4 | ~1.5x | ~2.1e-4 |
